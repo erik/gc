@@ -1,30 +1,30 @@
-## THIS IS A GENERIC MAKEFILE, NEEDS TO BE CHANGED TO ACTUALLY BUILD THIS PROJECT
-
 SRC := $(shell find . -name "*.c")
 OBJ := $(SRC:.c=.o)
 DEPS := $(SRC:.c=.d)
 
 CC  := gcc
 
-DFLAGS := -ggdb -O0
-LFLAGS := -lreadline -lm
+OPTIMIZE := -O2
+LFLAGS := -lm
 CFLAGS := -Wall -Wextra -pedantic -std=c99 -Wno-unused -Wno-unused-parameter
+DFLAGS := -ggdb
 
 .PHONY= all debug clean todo loc sloc check-syntax
 
 all: $(OBJ)
-	$(CC) $(OBJ) $(LFLAGS)
+	$(CC) $(OBJ) $(LFLAGS) -o test
 
 -include $(SRC:.c=.d)
 
 %.o: %.c
-	$(CC) -c -MMD $(CFLAGS) $< -o $@
+	$(CC) -c -MMD $(CFLAGS) $(OPTIMIZE) $< -o $@
 
-debug:
-	$(MAKE) all "CFLAGS=$(CFLAGS) $(DFLAGS)"
+debug: OPTIMIZE = -O0
+debug: CFLAGS += -DDEBUG $(DFLAGS)
+debug: all
 
 clean:
-	rm -f $(OBJ) $(DEPS)
+	rm -f $(OBJ) $(DEPS) test
 
 todo:
 	@ack 'XXX|TODO|FIXME'
@@ -32,9 +32,6 @@ todo:
 
 loc:
 	@ack --type=cc -f | xargs wc -l | sort -h
-
-sloc:
-	@cloc .
 
 check-syntax:
 	$(CC) -o nul $(CFLAGS) -S $(CHK_SOURCES)
