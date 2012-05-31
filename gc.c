@@ -1,35 +1,30 @@
 #include "gc.h"
 
-#include <stdlib.h>
-
-// global garbage collector
-struct gc _gc;
-
-void gc_init(marker m, sweeper s)
+void gc_init(struct gc* g, marker m, sweeper s)
 {
-  _gc.roots = NULL;
-  _gc.allocated = 0;
-  _gc.paused = false;
-  _gc.mark = m;
-  _gc.sweep = s;
+  g->roots = NULL;
+  g->allocated = 0;
+  g->paused = false;
+  g->mark = m;
+  g->sweep = s;
 }
 
-void gc_pause(void)
+void gc_pause(struct gc* g)
 {
-  _gc.paused = true;
+  g->paused = true;
 }
 
-void gc_unpause(void)
+void gc_unpause(struct gc* g)
 {
-  _gc.paused = false;
+  g->paused = false;
 }
 
-void gc_step_full(void)
+void gc_step_full(struct gc* g)
 {
-  struct root* root = _gc.roots;
+  struct root* root = g->roots;
 
   while(root != NULL) {
-    _gc.sweep(root->object);
+    g->sweep(root->object);
     struct root* next = root->next;
     free(root);
 
@@ -37,25 +32,31 @@ void gc_step_full(void)
   }
 }
 
-void gc_add_root(gc_object_header* object)
+void gc_add_root(struct gc* g, gc_object_header* object)
 {
   struct root* root = calloc(1, sizeof(struct root));
   root->object = object;
 
   // if this is the first root, assign directly
-  if(_gc.roots == NULL) {
-    _gc.roots = root;
+  if(g->roots == NULL) {
+    g->roots = root;
   }
   // otherwise, insert to head of list
   else {
-    root->next = _gc.roots;
-    _gc.roots->prev = root;
-    _gc.roots = root;
+    root->next = g->roots;
+    g->roots->prev = root;
+    g->roots = root;
   }
 }
 
+void gc_add_object(struct gc* g, gc_object_header* object)
+{
+  // TODO
+}
+
 // XXX: not even close.
-void gc_add_reference(gc_object_header* from, gc_object_header* to)
+void gc_add_reference(struct gc* g, gc_object_header* from,
+                      gc_object_header* to)
 {
   to->prev->next = to->next;
   to->next->prev = to->prev;
@@ -67,20 +68,21 @@ void gc_add_reference(gc_object_header* from, gc_object_header* to)
 }
 
 // XXX: steps is unused at this point
-void gc_step(unsigned steps)
+void gc_step(struct gc* g, unsigned steps)
 {
-  if(_gc.paused)
+  if(g->paused)
     return;
 
-  struct root* root = _gc.roots;
+  struct root* root = g->roots;
 
   // mark
   while(root != NULL) {
-    _gc.mark(root->object);
+    g->mark(root->object);
+    root = root->next;
   }
 
   // sweep
-  root = _gc.roots;
+  root = g->roots;
   while(root != NULL) {
     gc_object_header* obj = root->object;
 
@@ -90,12 +92,14 @@ void gc_step(unsigned steps)
           *next = obj->next,
           *prev = obj->prev;
 
-        _gc.sweep(obj);
+        g->sweep(obj);
         free(obj);
 
         prev->next = next;
         next->prev = prev;
         obj = next;
+      } else {
+        obj = obj->next;
       }
     }
 
@@ -103,21 +107,16 @@ void gc_step(unsigned steps)
   }
 }
 
-void* gc_alloc(size_t bytes)
+void* gc_alloc(struct gc* g, size_t bytes)
 {
-  _gc.allocated += bytes;
-
-  while(_gc.allocated >= GC_ALLOC_STEP) {
-    gc_step(GC_STEP_SIZE);
+  while(g->allocated >= GC_ALLOC_STEP) {
+    gc_step(g, GC_STEP_SIZE);
   }
 
   gc_object object = NULL;
+  g->allocated += bytes;
 
-  /* keep trying to garbage collect on OOM.
-     This will probably just cause an infinite loop. */
-  while((object = malloc(bytes)) == NULL) {
-    gc_step(GC_STEP_SIZE);
-  }
+  object = malloc(bytes);
 
   return object;
 }

@@ -5,6 +5,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 // how many bytes to allocate between GC cycles
 #ifndef GC_ALLOC_STEP
@@ -30,7 +31,7 @@ struct root {
 };
 
 typedef void* gc_object;
-typedef int (*marker)(gc_object_header*);
+typedef void (*marker)(gc_object_header*);
 typedef void (*sweeper)(gc_object_header*);
 
 struct gc {
@@ -43,19 +44,15 @@ struct gc {
   sweeper sweep;
 };
 
-// global garbage collector
-extern struct gc _gc;
-
-void gc_init(marker m, sweeper s);
-
-void gc_step(unsigned steps);
-void gc_step_full(void);
-
-void gc_add_root(gc_object_header* object);
-void gc_add_reference(gc_object_header* from, gc_object_header* to);
-void* gc_alloc(size_t bytes);
-
-void gc_pause(void);
-void gc_unpause(void);
+void gc_init(struct gc* g, marker m, sweeper s);
+void gc_step(struct gc* g, unsigned steps);
+void gc_step_full(struct gc* g);
+void gc_add_root(struct gc* g, gc_object_header* object);
+void gc_add_object(struct gc* g, gc_object_header* obj);
+void gc_add_reference(struct gc* g, gc_object_header* from,
+                      gc_object_header* to);
+void* gc_alloc(struct gc* g, size_t bytes);
+void gc_pause(struct gc* g);
+void gc_unpause(struct gc* g);
 
 #endif /* _GC_H_ */
