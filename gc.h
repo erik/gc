@@ -31,8 +31,8 @@ struct root {
 };
 
 typedef void* gc_object;
-typedef void (*marker)(gc_object_header*);
-typedef void (*sweeper)(gc_object_header*);
+typedef void (*marker)(void*);
+typedef void (*sweeper)(void*);
 
 struct gc {
   struct root* roots;
@@ -52,6 +52,7 @@ void gc_add_object(struct gc* g, gc_object_header* obj);
 void gc_add_reference(struct gc* g, gc_object_header* from,
                       gc_object_header* to);
 void* gc_alloc(struct gc* g, size_t bytes);
+void gc_mark(struct gc* g, gc_object obj);
 void gc_pause(struct gc* g);
 void gc_unpause(struct gc* g);
 

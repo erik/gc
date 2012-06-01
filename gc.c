@@ -19,6 +19,22 @@ void gc_unpause(struct gc* g)
   g->paused = false;
 }
 
+void gc_mark(struct gc* g, gc_object obj)
+{
+  // TODO: check that gc_obj is valid
+  gc_object_header* gc_obj = (void*)((char*)obj -
+                                     sizeof(gc_object_header));
+  gc_obj->marked = true;
+}
+
+void gc_sweep(struct gc* g, gc_object obj)
+{
+  // TODO: check that gc_obj is valid
+  gc_object_header* gc_obj = (void*)((char*)obj -
+                                     sizeof(gc_object_header));
+  gc_obj->marked = false;
+}
+
 void gc_step_full(struct gc* g)
 {
   struct root* root = g->roots;
@@ -109,14 +125,18 @@ void gc_step(struct gc* g, unsigned steps)
 
 void* gc_alloc(struct gc* g, size_t bytes)
 {
-  while(g->allocated >= GC_ALLOC_STEP) {
-    gc_step(g, GC_STEP_SIZE);
-  }
+  bytes += sizeof(gc_object_header);
 
-  gc_object object = NULL;
+  gc_step(g, GC_STEP_SIZE);
+
+  gc_object_header* object = NULL;
   g->allocated += bytes;
 
   object = malloc(bytes);
 
-  return object;
+  object->next = NULL;
+  object->prev = NULL;
+  object->marked = false;
+
+  return (char*)object + sizeof(gc_object_header);
 }
