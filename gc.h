@@ -5,6 +5,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 // how many bytes to allocate between GC cycles
@@ -15,6 +16,11 @@
 // number of steps to run each cycle
 #ifndef GC_STEP_SIZE
 #  define GC_STEP_SIZE 5
+#endif
+
+// default size of each newly allocated heap
+#ifndef GC_HEAP_SIZE
+#  define GC_HEAP_SIZE 4096
 #endif
 
 /* to be included at beginning of each GC'd object struct */
@@ -30,12 +36,21 @@ struct root {
   gc_object_header* object;
 };
 
+struct heap {
+  struct heap* next;
+  struct heap* prev;
+
+  size_t size, offset;
+  void* heap;
+};
+
 typedef void* gc_object;
 typedef void (*marker)(void*);
 typedef void (*sweeper)(void*);
 
 struct gc {
   struct root* roots;
+  struct heap* heaps;
 
   unsigned allocated;
   bool paused;
@@ -55,5 +70,8 @@ void* gc_alloc(struct gc* g, size_t bytes);
 void gc_mark(struct gc* g, gc_object obj);
 void gc_pause(struct gc* g);
 void gc_unpause(struct gc* g);
+
+struct heap* gc_create_heap(struct gc* g, size_t bytes);
+void* gc_heap_alloc(struct gc* g, size_t size);
 
 #endif /* _GC_H_ */

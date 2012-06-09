@@ -3,6 +3,7 @@
 void gc_init(struct gc* g, marker m, sweeper s)
 {
   g->roots = NULL;
+  g->heaps = NULL;
   g->allocated = 0;
   g->paused = false;
   g->mark = m;
@@ -22,7 +23,7 @@ void gc_unpause(struct gc* g)
 void gc_mark(struct gc* g, gc_object obj)
 {
   // TODO: check that gc_obj is valid
-  gc_object_header* gc_obj = (void*)((char*)obj -
+  gc_object_header* gc_obj = (void*)((uint8_t*)obj -
                                      sizeof(gc_object_header));
   gc_obj->marked = true;
 }
@@ -30,7 +31,7 @@ void gc_mark(struct gc* g, gc_object obj)
 void gc_sweep(struct gc* g, gc_object obj)
 {
   // TODO: check that gc_obj is valid
-  gc_object_header* gc_obj = (void*)((char*)obj -
+  gc_object_header* gc_obj = (void*)((uint8_t*)obj -
                                      sizeof(gc_object_header));
   gc_obj->marked = false;
 }
@@ -45,6 +46,13 @@ void gc_step_full(struct gc* g)
     free(root);
 
     root = next;
+  }
+
+  struct heap* heap = g->heaps;
+  while(heap != NULL) {
+    struct heap* next = heap->next;
+    free(heap);
+    heap = next;
   }
 }
 
@@ -109,7 +117,7 @@ void gc_step(struct gc* g, unsigned steps)
           *prev = obj->prev;
 
         g->sweep(obj);
-        free(obj);
+//        free(obj);
 
         prev->next = next;
         next->prev = prev;
@@ -127,16 +135,56 @@ void* gc_alloc(struct gc* g, size_t bytes)
 {
   bytes += sizeof(gc_object_header);
 
-  gc_step(g, GC_STEP_SIZE);
+//  gc_step(g, GC_STEP_SIZE);
 
   gc_object_header* object = NULL;
   g->allocated += bytes;
 
-  object = malloc(bytes);
+  object = gc_heap_alloc(g, bytes);
 
   object->next = NULL;
   object->prev = NULL;
   object->marked = false;
 
-  return (char*)object + sizeof(gc_object_header);
+  return (uint8_t*)object + sizeof(gc_object_header);
+}
+
+struct heap* gc_create_heap(struct gc* g, size_t bytes)
+{
+  struct heap* heap = malloc(sizeof(struct heap) + bytes);
+  heap->prev = NULL;
+  heap->next = NULL;
+
+  heap->size = bytes;
+  heap->offset = 0;
+
+  heap->heap = heap + sizeof(struct heap);
+
+  return heap;
+}
+
+void* gc_heap_alloc(struct gc* g, size_t size)
+{
+  struct heap* heap = g->heaps,
+    *last = NULL;
+
+  while(heap && heap->size - heap->offset < size) {
+    last = heap;
+    heap = heap->next;
+  }
+
+  if(heap == NULL) {
+    heap = gc_create_heap(g, size > GC_HEAP_SIZE ?
+                          size : GC_HEAP_SIZE);
+    heap->prev = NULL;
+    g->heaps = heap;
+  } else {
+    heap->prev = last;
+  }
+  heap->next = NULL;
+
+  void* ptr = (uint8_t*)heap->heap + heap->offset;
+  heap->offset += size;
+
+  return ptr;
 }

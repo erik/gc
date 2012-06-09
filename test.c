@@ -33,7 +33,7 @@ int main(int argc, char** argv)
   gc_init(&gc, mark_node, sweep_node);
 
   ListNode* root = gc_alloc(&gc, sizeof(ListNode));
-  root->value = 2;
+  root->value = 0;
 
   gc_add_root(&gc, (void*)root);
 
