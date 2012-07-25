@@ -8,70 +8,57 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// how many bytes to allocate between GC cycles
-#ifndef GC_ALLOC_STEP
-#  define GC_ALLOC_STEP 100
-#endif
+#include "gc_list.h"
 
-// number of steps to run each cycle
-#ifndef GC_STEP_SIZE
-#  define GC_STEP_SIZE 5
-#endif
+typedef bool (*gc_marker)(void*);
+typedef void (*gc_sweeper)(void*);
 
-// default size of each newly allocated heap
-#ifndef GC_HEAP_SIZE
-#  define GC_HEAP_SIZE 4096
-#endif
+typedef struct gc_list gc_object;
 
-/* to be included at beginning of each GC'd object struct */
-typedef struct gc_object_header {
-  struct gc_object_header *next, *prev;
-  bool marked;
-} gc_object_header;
-
-struct root {
-  struct root* next;
-  struct root* prev;
-
-  gc_object_header* object;
-};
-
-struct heap {
-  struct heap* next;
-  struct heap* prev;
-
-  size_t size, offset;
-  void* heap;
-};
-
-typedef void* gc_object;
-typedef void (*marker)(void*);
-typedef void (*sweeper)(void*);
+#define SWEEP_LEVEL 100
 
 struct gc {
-  struct root* roots;
-  struct heap* heaps;
+  struct gc_list *white, *grey, *black, *free;
 
   unsigned allocated;
-  bool paused;
+  /* floating point to allow e.g. 1 mark every two allocs */
+  double to_mark, marks_per_alloc;
+  uint8_t paused;
 
-  marker mark;
-  sweeper sweep;
+  gc_marker mark;
+  gc_sweeper sweep;
 };
 
-void gc_init(struct gc* g, marker m, sweeper s);
-void gc_step(struct gc* g, unsigned steps);
-void gc_step_full(struct gc* g);
-void gc_add_root(struct gc* g, gc_object_header* object);
-void gc_add_object(struct gc* g, gc_object_header* obj);
-void gc_add_reference(struct gc* g, gc_object_header* from,
-                      gc_object_header* to);
-void* gc_alloc(struct gc* g, size_t bytes);
-void gc_mark(struct gc* g, gc_object obj);
+/* creation and destruction of gc object */
+void gc_init(struct gc* g, gc_marker m, gc_sweeper s);
+void gc_destroy(struct gc* g);
+
+/* manipulate paused state */
 void gc_pause(struct gc* g);
 void gc_unpause(struct gc* g);
+void gc_resume(struct gc* g);
 
-struct heap* gc_create_heap(struct gc* g, size_t bytes);
-void* gc_heap_alloc(struct gc* g, size_t size);
+/* allocate a new object */
+gc_object* gc_alloc(struct gc* g, void* object);
+
+/* called from user code to move object into grey list */
+void gc_mark(struct gc* g, struct gc_list* obj);
+
+/* deal with roots */
+void gc_mark_root(struct gc* g, struct gc_list* obj);
+void gc_remove_root(struct gc* g, struct gc_list* obj);
+void gc_remove_roots(struct gc* g);
+
+/* garbage collector phases */
+void gc_mark_phase(struct gc* g);
+void gc_sweep_phase(struct gc* g);
+
+/* force garbage collection cycle */
+void gc_collect(struct gc* g);
+
+#define GC_OBJECT(type) typedef struct { \
+    GC_LIST_HEADER;                      \
+    type* object;                        \
+  } GC_##type
 
 #endif /* _GC_H_ */

@@ -10,48 +10,46 @@ typedef struct ListNode {
   int value;
 } ListNode;
 
-void mark_node(gc_object obj)
+GC_OBJECT(ListNode);
+
+bool should_mark = true;
+
+bool mark_node(void* obj)
 {
+  if(!obj) {
+    puts(">> NOT marking NULL node");
+    return false;
+  }
+
   ListNode* node = (ListNode*)obj;
 
-  printf("Marking node %d\n", node->value);
-
-  gc_mark(&gc, obj);
-
-  if(node->next)
-    mark_node((void*)node->next);
+  printf(">> Marking node for collection: %d\n", node->value);
+  return false;
 }
 
-void sweep_node(gc_object obj)
+void sweep_node(void* obj)
 {
+  if(!obj) {
+    puts(">> Sweeping NULL node");
+    return;
+  }
   ListNode* node = (ListNode*)obj;
-  printf("Freeing node %d\n", node->value);
+  printf(">> Sweeping node %d\n", node->value);
+  free(node);
 }
 
 int main(int argc, char** argv)
 {
   gc_init(&gc, mark_node, sweep_node);
 
-  ListNode* root = gc_alloc(&gc, sizeof(ListNode));
-  root->value = 0;
-
-  gc_add_root(&gc, (void*)root);
-
-  ListNode* node = root;
-  for(int i = 0; i < 4; ++i) {
-    printf("Allocating node %d\n", i);
-
-    ListNode* next = gc_alloc(&gc, sizeof(ListNode));
-    next->value = i;
-    next->next = NULL;
-
-    node->next = next;
-    node = next;
-
+  for(unsigned i = 0; i < 10; ++i) {
+    ListNode* node = malloc(sizeof(ListNode));
+    node->value = i;
+    gc_alloc(&gc, node);
   }
 
-  // free everything
-  gc_step_full(&gc);
+  // everything should be collected
+  gc_collect(&gc);
 
   return 0;
 }

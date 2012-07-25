@@ -1,190 +1,230 @@
-#include "gc.h"
+//#define NDEBUG 1
 
-void gc_init(struct gc* g, marker m, sweeper s)
+#include <assert.h>
+#include <stdio.h>
+
+#include "gc.h"
+#include "gc_list.h"
+
+
+#define LOG(s)                                                  \
+  printf(">>\t%s:%d:%s >> ", __FILE__, __LINE__, __FUNCTION__); \
+  puts(s)
+
+#define LOGF(...)                                               \
+  printf(">>\t%s:%d:%s >> ", __FILE__, __LINE__, __FUNCTION__);     \
+  printf(__VA_ARGS__)
+
+/* internal gc functions */
+static inline void gc_mark_init(struct gc* g);
+static void gc_sweep_list(struct gc* g, struct gc_list* list,
+                          enum gc_object_color color);
+static void gc_mark_grey(struct gc* g, unsigned num);
+static inline void gc_mark_greys(struct gc* g);
+
+void gc_init(struct gc* g, gc_marker m, gc_sweeper s)
 {
-  g->roots = NULL;
-  g->heaps = NULL;
+  g->white = list_create(GC_WHITE);
+  g->grey  = list_create(GC_GREY);
+  g->black = list_create(GC_BLACK);
+  g->free  = list_create(GC_FREE);
+
+  list_loop(g->white);
+  g->white->prev = g->free;
+  g->white->next = g->grey;
+  g->grey->prev = g->white;
+  g->grey->next = g->black;
+  g->black->prev = g->grey;
+  g->black->next = g->free;
+  g->free->prev = g->black;
+  g->free->next = g->white;
+
   g->allocated = 0;
-  g->paused = false;
+  g->to_mark = 0;
+  g->marks_per_alloc = .5;
+
+  g->paused = 0;
+
   g->mark = m;
   g->sweep = s;
 }
 
+void gc_destroy(struct gc* g)
+{
+  gc_sweep_list(g, g->white, GC_WHITE);
+  gc_sweep_list(g, g->grey, GC_GREY);
+  gc_sweep_list(g, g->black, GC_BLACK);
+
+  struct gc_list* f = g->free;
+  while(f) {
+    struct gc_list* next = f->next;
+    free(f);
+    f = next;
+  }
+
+  free(g);
+}
+
 void gc_pause(struct gc* g)
 {
-  g->paused = true;
+  g->paused++;
 }
 
 void gc_unpause(struct gc* g)
 {
-  g->paused = false;
+  g->paused--;
 }
 
-void gc_mark(struct gc* g, gc_object obj)
+void gc_resume(struct gc* g)
 {
-  // TODO: check that gc_obj is valid
-  gc_object_header* gc_obj = (void*)((uint8_t*)obj -
-                                     sizeof(gc_object_header));
-  gc_obj->marked = true;
+  g->paused = 0;
 }
 
-void gc_sweep(struct gc* g, gc_object obj)
+gc_object* gc_alloc(struct gc* g, void* object)
 {
-  // TODO: check that gc_obj is valid
-  gc_object_header* gc_obj = (void*)((uint8_t*)obj -
-                                     sizeof(gc_object_header));
-  gc_obj->marked = false;
-}
+  LOG("gc alloc");
+  struct gc_list* obj = g->free->next;
 
-void gc_step_full(struct gc* g)
-{
-  struct root* root = g->roots;
-
-  while(root != NULL) {
-    g->sweep(root->object);
-    struct root* next = root->next;
-    free(root);
-
-    root = next;
+  if(obj->color != GC_FREE) {
+    LOGF("creating new element\n");
+    obj = list_create(GC_WHITE);
   }
 
-  struct heap* heap = g->heaps;
-  while(heap != NULL) {
-    struct heap* next = heap->next;
-    free(heap);
-    heap = next;
-  }
-}
+  obj->object = object;
 
-void gc_add_root(struct gc* g, gc_object_header* object)
-{
-  struct root* root = calloc(1, sizeof(struct root));
-  root->object = object;
+  LOG("moving new object to white");
+  list_move(obj, g->white, GC_WHITE);
 
-  // if this is the first root, assign directly
-  if(g->roots == NULL) {
-    g->roots = root;
-  }
-  // otherwise, insert to head of list
-  else {
-    root->next = g->roots;
-    g->roots->prev = root;
-    g->roots = root;
-  }
-}
+  g->allocated++;
+  g->to_mark += g->marks_per_alloc;
 
-void gc_add_object(struct gc* g, gc_object_header* object)
-{
-  // TODO
-}
+  if(!g->paused) {
 
-// XXX: not even close.
-void gc_add_reference(struct gc* g, gc_object_header* from,
-                      gc_object_header* to)
-{
-  to->prev->next = to->next;
-  to->next->prev = to->prev;
+    if(g->to_mark > 1.0) {
+      // explicitly place into black list to prevent being freed
+      // before being returned
+      obj->color = GC_BLACK;
+      list_move(obj, g->black, GC_BLACK);
 
-  gc_object_header* next = from->next;
-  from->next = to;
-
-  to->next = next;
-}
-
-// XXX: steps is unused at this point
-void gc_step(struct gc* g, unsigned steps)
-{
-  if(g->paused)
-    return;
-
-  struct root* root = g->roots;
-
-  // mark
-  while(root != NULL) {
-    g->mark(root->object);
-    root = root->next;
-  }
-
-  // sweep
-  root = g->roots;
-  while(root != NULL) {
-    gc_object_header* obj = root->object;
-
-    while(obj != NULL) {
-      if(!obj->marked) {
-        gc_object_header
-          *next = obj->next,
-          *prev = obj->prev;
-
-        g->sweep(obj);
-//        free(obj);
-
-        prev->next = next;
-        next->prev = prev;
-        obj = next;
-      } else {
-        obj = obj->next;
-      }
+      gc_mark_phase(g);
     }
+  }
+  return obj;
+}
 
-    root = root->next;
+void gc_mark(struct gc* g, struct gc_list* obj)
+{
+  if(obj->color == GC_WHITE)
+    list_move(obj, g->grey, GC_GREY);
+}
+
+void gc_mark_root(struct gc* g, struct gc_list* obj)
+{
+  if(obj->root) return;
+
+  obj->root = true;
+  list_move(obj, g->grey, GC_GREY);
+}
+
+void gc_remove_root(struct gc* g, struct gc_list* obj)
+{
+  assert(obj->root);
+
+  obj->root = false;
+  list_move(obj, g->white, GC_WHITE);
+}
+
+void gc_mark_phase(struct gc* g)
+{
+  if(g->allocated > SWEEP_LEVEL)
+    gc_sweep_phase(g);
+  else
+    gc_mark_grey(g, (unsigned)g->to_mark);
+
+  // grey list is empty
+  if(g->grey->next->color != GC_GREY) {
+    gc_sweep_list(g, g->white, GC_WHITE);
   }
 }
 
-void* gc_alloc(struct gc* g, size_t bytes)
+void gc_sweep_phase(struct gc* g)
 {
-  bytes += sizeof(gc_object_header);
+  gc_mark_greys(g);
 
-//  gc_step(g, GC_STEP_SIZE);
+  gc_sweep_list(g, g->white, GC_WHITE);
 
-  gc_object_header* object = NULL;
-  g->allocated += bytes;
+  // swap black and white lists
+  struct gc_list* tmp = g->white;
+  g->white = g->black;
+  g->black = tmp;
 
-  object = gc_heap_alloc(g, bytes);
-
-  object->next = NULL;
-  object->prev = NULL;
-  object->marked = false;
-
-  return (uint8_t*)object + sizeof(gc_object_header);
+  // place root objects back into grey list
+  gc_mark_init(g);
 }
 
-struct heap* gc_create_heap(struct gc* g, size_t bytes)
+void gc_collect(struct gc* g)
 {
-  struct heap* heap = malloc(sizeof(struct heap) + bytes);
-  heap->prev = NULL;
-  heap->next = NULL;
+  assert(!g->paused);
 
-  heap->size = bytes;
-  heap->offset = 0;
-
-  heap->heap = heap + sizeof(struct heap);
-
-  return heap;
+  gc_sweep_phase(g);
 }
 
-void* gc_heap_alloc(struct gc* g, size_t size)
+static inline void gc_mark_init(struct gc* g)
 {
-  struct heap* heap = g->heaps,
-    *last = NULL;
+  /* start by moving all root objects back into the grey list */
+  struct gc_list* list = g->white;
 
-  while(heap && heap->size - heap->offset < size) {
-    last = heap;
-    heap = heap->next;
+  while(list != NULL && list->color == GC_WHITE) {
+    struct gc_list* next = list->next;
+    if(list->root)
+      list_move(list, g->grey, GC_GREY);
+    list = next;
+  }
+}
+
+static void gc_sweep_list(struct gc* g, struct gc_list* list,
+                          enum gc_object_color color)
+{
+  unsigned frees = 0;
+  LOGF("looking for color %d\n", color);
+
+  while(list != NULL && list->color == color) {
+    struct gc_list* next = list->next;
+
+    LOGF("%p, %p\n", (void*)list, (void*)next);
+
+    g->sweep(list->object);
+    frees++;
+
+    list->object = NULL;
+    list_move(list, g->free, GC_FREE);
+
+    list = next;
   }
 
-  if(heap == NULL) {
-    heap = gc_create_heap(g, size > GC_HEAP_SIZE ?
-                          size : GC_HEAP_SIZE);
-    heap->prev = NULL;
-    g->heaps = heap;
-  } else {
-    heap->prev = last;
+  LOGF("freed %d from list %d\n", frees, color);
+
+  g->allocated -= frees;
+}
+
+static void gc_mark_grey(struct gc* g, unsigned num)
+{
+  struct gc_list *ptr = g->grey, *next = NULL;
+  while(ptr != NULL && ptr->color == GC_GREY) {
+    next = ptr->next;
+
+    LOGF("%p, %p\n", (void*)ptr, (void*)next);
+
+    if(ptr->root || g->mark(ptr->object)) {
+      list_move(ptr, g->black, GC_BLACK);
+    }
+    ptr = next;
   }
-  heap->next = NULL;
 
-  void* ptr = (uint8_t*)heap->heap + heap->offset;
-  heap->offset += size;
+  g->to_mark = 0;
+}
 
-  return ptr;
+static inline void gc_mark_greys(struct gc* g)
+{
+  gc_mark_grey(g, 10000);
 }
