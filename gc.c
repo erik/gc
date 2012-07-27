@@ -1,19 +1,8 @@
-//#define NDEBUG 1
-
-#include <assert.h>
 #include <stdio.h>
 
 #include "gc.h"
 #include "gc_list.h"
-
-
-#define LOG(s)                                                  \
-  printf(">>\t%s:%d:%s >> ", __FILE__, __LINE__, __FUNCTION__); \
-  puts(s)
-
-#define LOGF(...)                                               \
-  printf(">>\t%s:%d:%s >> ", __FILE__, __LINE__, __FUNCTION__);     \
-  printf(__VA_ARGS__)
+#include "debug.h"
 
 /* internal gc functions */
 static inline void gc_mark_init(struct gc* g);

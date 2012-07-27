@@ -1,10 +1,8 @@
-//#define NDEBUG 1
-
 #include <stdlib.h>
 #include <stdbool.h>
-#include <assert.h>
 
 #include "gc_list.h"
+#include "debug.h"
 
 struct gc_list* list_create(enum gc_object_color color)
 {
